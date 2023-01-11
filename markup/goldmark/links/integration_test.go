@@ -1,4 +1,4 @@
-package images_test
+package links_test
 
 import (
 	"strings"

@@ -22,6 +22,7 @@ import (
 	"github.com/gohugoio/hugo/markup/goldmark/images"
 	"github.com/gohugoio/hugo/markup/goldmark/internal/extensions/attributes"
 	"github.com/gohugoio/hugo/markup/goldmark/internal/render"
+	"github.com/gohugoio/hugo/markup/goldmark/links"
 
 	"github.com/gohugoio/hugo/markup/converter"
 	"github.com/gohugoio/hugo/markup/tableofcontents"
@@ -95,6 +96,8 @@ func newMarkdown(pcfg converter.ProviderConfig) goldmark.Markdown {
 		}
 		parserOptions []parser.Option
 	)
+
+	extensions = append(extensions, links.New())
 
 	extensions = append(extensions, images.New(cfg.Parser.WrapStandAloneImageWithinParagraph))
 

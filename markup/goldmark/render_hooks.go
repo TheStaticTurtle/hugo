@@ -22,6 +22,7 @@ import (
 	"github.com/gohugoio/hugo/markup/goldmark/goldmark_config"
 	"github.com/gohugoio/hugo/markup/goldmark/images"
 	"github.com/gohugoio/hugo/markup/goldmark/internal/render"
+	"github.com/gohugoio/hugo/markup/goldmark/links"
 	"github.com/gohugoio/hugo/markup/internal/attributes"
 
 	"github.com/yuin/goldmark"
@@ -44,7 +45,7 @@ func newLinkRenderer(cfg goldmark_config.Config) renderer.NodeRenderer {
 }
 
 func newLinks(cfg goldmark_config.Config) goldmark.Extender {
-	return &links{cfg: cfg}
+	return &linksCfg{cfg: cfg}
 }
 
 type linkContext struct {
@@ -53,6 +54,7 @@ type linkContext struct {
 	title       string
 	text        hstring.RenderedString
 	plainText   string
+	isBlock     bool
 	*attributes.AttributesHolder
 }
 
@@ -76,14 +78,13 @@ func (ctx linkContext) Title() string {
 	return ctx.title
 }
 
+func (ctx linkContext) IsBlock() bool {
+	return ctx.isBlock
+}
+
 type imageLinkContext struct {
 	linkContext
 	ordinal int
-	isBlock bool
-}
-
-func (ctx imageLinkContext) IsBlock() bool {
-	return ctx.isBlock
 }
 
 func (ctx imageLinkContext) Ordinal() int {
@@ -190,9 +191,9 @@ func (r *hookedRenderer) renderImage(w util.BufWriter, source []byte, node ast.N
 				text:             hstring.RenderedString(text),
 				plainText:        string(n.Text(source)),
 				AttributesHolder: attributes.New(attrs, attributes.AttributesOwnerGeneral),
+				isBlock:          isBlock,
 			},
 			ordinal: ordinal,
-			isBlock: isBlock,
 		},
 	)
 
@@ -270,6 +271,19 @@ func (r *hookedRenderer) renderLink(w util.BufWriter, source []byte, node ast.No
 	text := ctx.Buffer.Bytes()[pos:]
 	ctx.Buffer.Truncate(pos)
 
+	var (
+		isBlock bool
+	)
+	if b, ok := n.AttributeString(links.AttrIsBlock); ok && b.(bool) {
+		isBlock = true
+	}
+
+	// We use the attributes to signal from the parser whether the image is in
+	// a block context or not.
+	// We may find a better way to do that, but for now, we'll need to remove any
+	// internal attributes before rendering.
+	attrs := r.filterInternalAttributes(n.Attributes())
+
 	err := lr.RenderLink(
 		w,
 		linkContext{
@@ -278,7 +292,8 @@ func (r *hookedRenderer) renderLink(w util.BufWriter, source []byte, node ast.No
 			title:            string(n.Title),
 			text:             hstring.RenderedString(text),
 			plainText:        string(n.Text(source)),
-			AttributesHolder: attributes.Empty,
+			AttributesHolder: attributes.New(attrs, attributes.AttributesOwnerGeneral),
+			isBlock:          isBlock,
 		},
 	)
 
@@ -328,7 +343,6 @@ func (r *hookedRenderer) renderAutoLink(w util.BufWriter, source []byte, node as
 			lr = h.(hooks.LinkRenderer)
 		}
 	}
-
 	if !ok {
 		return r.renderAutoLinkDefault(w, source, node, entering)
 	}
@@ -339,6 +353,17 @@ func (r *hookedRenderer) renderAutoLink(w util.BufWriter, source []byte, node as
 		url = "mailto:" + url
 	}
 
+	var isBlock bool
+	if b, ok := n.AttributeString(links.AttrIsBlock); ok && b.(bool) {
+		isBlock = true
+	}
+
+	// We use the attributes to signal from the parser whether the image is in
+	// a block context or not.
+	// We may find a better way to do that, but for now, we'll need to remove any
+	// internal attributes before rendering.
+	attrs := r.filterInternalAttributes(n.Attributes())
+
 	err := lr.RenderLink(
 		w,
 		linkContext{
@@ -346,7 +371,8 @@ func (r *hookedRenderer) renderAutoLink(w util.BufWriter, source []byte, node as
 			destination:      url,
 			text:             hstring.RenderedString(label),
 			plainText:        label,
-			AttributesHolder: attributes.Empty,
+			AttributesHolder: attributes.New(attrs, attributes.AttributesOwnerGeneral),
+			isBlock:          isBlock,
 		},
 	)
 
@@ -388,7 +414,7 @@ func (r *hookedRenderer) renderAutoLinkDefault(w util.BufWriter, source []byte, 
 func (r *hookedRenderer) autoLinkURL(n *ast.AutoLink, source []byte) []byte {
 	url := n.URL(source)
 	if len(n.Protocol) > 0 && !bytes.Equal(n.Protocol, r.linkifyProtocol) {
-		// The CommonMark spec says "http" is the correct protocol for links,
+		// The CommonMark spec says "http" is the correct protocol for links_cfg,
 		// but this doesn't make much sense (the fact that they should care about the rendered output).
 		// Note that n.Protocol is not set if protocol is provided by user.
 		url = append(r.linkifyProtocol, url[len(n.Protocol):]...)
@@ -461,12 +487,12 @@ func (r *hookedRenderer) renderHeadingDefault(w util.BufWriter, source []byte, n
 	return ast.WalkContinue, nil
 }
 
-type links struct {
+type linksCfg struct {
 	cfg goldmark_config.Config
 }
 
 // Extend implements goldmark.Extender.
-func (e *links) Extend(m goldmark.Markdown) {
+func (e *linksCfg) Extend(m goldmark.Markdown) {
 	m.Renderer().AddOptions(renderer.WithNodeRenderers(
 		util.Prioritized(newLinkRenderer(e.cfg), 100),
 	))
